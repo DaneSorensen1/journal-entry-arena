@@ -1,0 +1,875 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Journal Entry Arena — Leaderboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#F3F5F7;--surface:#fff;--ink:#1B2A41;--navy:#1F3A5F;--gold:#C8961E;--rule:#D5DEE8;--muted:#5B6B7F;--ok:#2E7D4F}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'Atkinson Hyperlegible',system-ui,sans-serif;font-size:clamp(18px,2.2vw,30px);transition:background .6s}
+.wrap{max-width:1400px;margin:0 auto;padding:3vh 4vw}
+h1{font-family:'Source Serif 4',Georgia,serif;font-weight:600;font-size:1.6em;margin:0 0 .2em}
+.sub{color:var(--muted);margin-bottom:1em}
+.boards{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:1.2em}
+.board{background:var(--surface);border:1px solid var(--rule);border-left:6px solid var(--gold);border-radius:14px;padding:.8em 1em}
+.board h2{font-family:'Source Serif 4',Georgia,serif;font-size:1.1em;margin:0 0 .4em;color:var(--navy)}
+.row{display:grid;grid-template-columns:1.4em 1fr auto;gap:.6em;padding:.3em 0;border-bottom:1px solid var(--rule);font-variant-numeric:tabular-nums;align-items:baseline}
+.row:last-child{border-bottom:none}
+.row .n{color:var(--muted)}.row .s{font-weight:700}
+.row.moved{animation:pulse 1.2s}
+@keyframes pulse{0%{background:#FBF1D6}100%{background:transparent}}
+.empty{color:var(--muted);font-style:italic}
+.foot{color:var(--muted);font-size:.7em;margin-top:1.5em}
+.pin{display:flex;gap:.4em;flex-wrap:wrap;margin:.6em 0 1em}.pin button{font:inherit;font-size:.6em;padding:.3em .8em;border:1px solid var(--rule);background:#fff;border-radius:999px;cursor:pointer}.pin button.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 id="title">Journal Entry Arena</h1>
+  <div class="sub" id="sub">Connecting to the class record…</div>
+  <div class="pin" id="pin"></div>
+  <div class="boards" id="boards"></div>
+  <div class="foot">Top five only. A category needs five attempts to rank; the board score needs all six categories ranked. Scores are each student's accuracy on their most recent five attempts in a category; ties are broken by current streak, then by attempts. ★ means the last five were all right and included a harder question.</div>
+</div>
+<script src="config.js"></script>
+<script>
+// Journal Entry Arena — content bank (Phase 1 starter, Phillips Ch. 2–3 scope)
+// Placeholders: {co} company, {svc} service, {amt} amount, {part} partial amount, {n} months, {m} month name.
+// Amount formulas may use amt, n, part and + - * / ( ).
+// "is": income-statement effect of THIS entry: rev | exp | none.  "cash": in | out | none.
+window.JEA_CONTENT = {
+  version: 1,
+  categories: [
+    { code: 'FIN',  name: 'Financing & investing',   short: 'Fin / Inv',   blurb: 'Money coming in from owners and lenders, money going out to repay lenders, and money spent on long-lived things like equipment. No revenue, no expense.' },
+    { code: 'REV',  name: 'Revenue earned now',      short: 'Revenue',     blurb: 'The work is done or the sale is made in this entry, so revenue is recorded now. Cash may arrive now, later, or already have arrived.' },
+    { code: 'EXP',  name: 'Expense incurred now',    short: 'Expense',     blurb: 'A cost is used up in this entry, so an expense is recorded now, whether it is paid now or later.' },
+    { code: 'PRE',  name: 'Cash first, benefit later', short: 'Cash first', blurb: 'Cash moves before the revenue is earned or the cost is used up. These entries create an asset (prepaid, supplies) or a liability (unearned revenue). No revenue or expense yet.' },
+    { code: 'FOL',  name: 'Settle up / use up',      short: 'Follow-up',   blurb: 'The second entry of a pair: collecting a receivable, paying a payable, or moving an amount from unearned revenue to revenue or from a prepaid to an expense.' },
+    { code: 'NONE', name: 'No entry needed',         short: 'No entry',    blurb: 'Events that sound like transactions but are not, because nothing was exchanged yet.' },
+  ],
+  accounts: {
+    'Cash': 'asset', 'Accounts Receivable': 'asset', 'Supplies': 'asset', 'Prepaid Insurance': 'asset', 'Prepaid Rent': 'asset', 'Equipment': 'asset',
+    'Accounts Payable': 'liability', 'Notes Payable': 'liability', 'Unearned Revenue': 'liability',
+    'Common Stock': 'equity',
+    'Service Revenue': 'revenue',
+    'Rent Expense': 'expense', 'Utilities Expense': 'expense', 'Advertising Expense': 'expense', 'Salaries and Wages Expense': 'expense',
+    'Supplies Expense': 'expense', 'Insurance Expense': 'expense', 'Repairs Expense': 'expense',
+  },
+  rules: {
+    D1: 'Reversed sides', D2: 'Timing: cash instead of earned/incurred', D3: 'Classification: asset vs. expense, or liability vs. revenue',
+    D4: 'Wrong amount', D5: 'Ignored the default when terms are unstated', D6: 'Wrong payable or receivable', D7: 'Cash in a no-cash entry',
+    D8: 'Recorded a non-event', D9: 'Half-entry or double-count',
+  },
+  companies: ['Harbor Design', 'Northwind Tutoring', 'Maple Street Repair', 'Blue Pine Consulting', 'Lakeside Cleaning', 'Summit Photo', 'Ridgeway Lawn Care', 'Copper Kettle Catering', 'Evergreen Web Studio', 'Beacon Fitness', 'Granite Bookkeeping', 'Red Door Tutoring', 'Willow Event Planning', 'Skyline Window Washing', 'Ironwood Moving', 'Cedar Tax Prep', 'Lantern Music Lessons', 'Fox River Landscaping'],
+  services: ['consulting services', 'cleaning services', 'tutoring services', 'repair services', 'design services', 'landscaping services', 'photography services', 'catering services'],
+  months: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November'],
+
+  // ---- Theory (plain prose, same voice as the note sheets) ----
+  theory: {
+    general: {
+      title: 'How to think through any transaction',
+      body: [
+        'Every question in this game can be answered with the same five-step routine. Run it every time, even when the answer looks obvious, because the mistakes that cost points are almost always skipped steps rather than missing knowledge.',
+        '1. Did an exchange happen? One party gives something and the other receives something. Promises, orders, plans, and quotes are not exchanges, so they get no entry. (The only exception is the "use up" entry at the end of a month, where something recorded earlier is now partly used.)',
+        '2. What was received and what was given? Name the two (sometimes three) accounts, and say what type each one is: asset, liability, equity, revenue, or expense.',
+        '3. Did each account increase or decrease?',
+        '4. Which side? Assets, expenses, and dividends increase with a debit. Liabilities, Common Stock, and revenues increase with a credit. Decreases go on the opposite side.',
+        '5. Check: do debits equal credits? If not, something in steps 2–4 is wrong.',
+        'Two timing questions decide most of the hard cases. First: is revenue or expense happening in this entry, or not at all? Revenue happens when the work is done or the sale is made. Expense happens when the cost is used up. Second: is cash moving in this entry, in or out, or not at all? Cash moving and revenue or expense happening are separate questions, and they often happen at different times.',
+        'Default when the description says nothing about payment: assume cash changed hands. If it says on account, billed, invoiced, or will pay later, a receivable or payable is involved instead of cash.',
+      ],
+    },
+    FIN: {
+      title: 'Financing & investing',
+      body: [
+        'These are the entries from Chapter 2. The company is raising money (from owners or from lenders) or spending money on things it will use for years (equipment). Nothing is earned and nothing is used up, so no revenue or expense account appears.',
+        'Routine: name the asset that moved (usually Cash or Equipment), then ask where it came from or went. Owners put money in: Common Stock. A bank lends money with a signed note: Notes Payable. A supplier lets you pay later with no formal note: Accounts Payable. Repaying a lender reduces the liability.',
+        'Watch for: stock is not a loan (Common Stock, not Notes Payable); a note signed with a bank is not Accounts Payable; buying equipment is an asset, not an expense; the full cost of an asset is recorded even when only part of it is paid now.',
+      ],
+    },
+    REV: {
+      title: 'Revenue earned now',
+      body: [
+        'Revenue is recorded when the company does the work or makes the sale, not when the cash shows up. The cue words are performed, provided, completed, delivered, made a sale.',
+        'Routine: confirm the work is done (revenue now, credit Service Revenue). Then ask about cash: collected now means debit Cash; billed or on account means debit Accounts Receivable; part now and part later means both, adding up to the full revenue.',
+        'Watch for: a check is cash; a bill sent is a receivable, not cash; the revenue is the full amount earned even if only part was collected; cash received before the work is Unearned Revenue (that belongs in Cash first, benefit later).',
+      ],
+    },
+    EXP: {
+      title: 'Expense incurred now',
+      body: [
+        'An expense is recorded when a cost is used up, not when it is paid. Rent for this month, wages for this week, electricity already used, ads that already ran, a repair already done: all expenses now.',
+        'Routine: confirm the benefit was used in this period (expense now, debit the expense account). Then ask about cash: paid now means credit Cash; a bill received to be paid later means credit Accounts Payable; part now and part later means both.',
+        'Watch for: a repair keeps an asset working and is an expense, while buying the asset itself is not; supplies bought for future use are an asset (Cash first, benefit later), but supplies used up immediately are an expense; wages are an expense in the period the work is done, whether paid that day or later.',
+      ],
+    },
+    PRE: {
+      title: 'Cash first, benefit later',
+      body: [
+        'Sometimes cash moves before anything is earned or used up. When the company pays first, it gets an asset: Prepaid Insurance, Prepaid Rent, or Supplies. When a customer pays first, the company owes the customer the work, so it records a liability: Unearned Revenue.',
+        'Routine: notice the cue (in advance, prepaid, deposit, gift cards, for next month, not yet used). Record the cash that moved. Then record the promise: a prepaid asset if we paid, Unearned Revenue if we were paid. No revenue and no expense yet.',
+        'Watch for: the whole amount paid goes into the prepaid account now, not just one month; a customer deposit is not revenue and it is not a receivable (nobody owes us); gift cards sold are a liability until redeemed.',
+      ],
+    },
+    FOL: {
+      title: 'Settle up / use up',
+      body: [
+        'Many transactions come in pairs. The first entry recorded the revenue or expense (or the prepayment). The second entry either settles the cash or moves the prepaid amount to where it belongs now. The hard part is remembering that the revenue or expense was already recorded the first time, so it must not be recorded again.',
+        'Settle up: collecting a receivable is debit Cash, credit Accounts Receivable, with no revenue. Paying a payable is debit Accounts Payable, credit Cash, with no expense.',
+        'Use up: when the work that a customer prepaid for is finished, debit Unearned Revenue and credit Service Revenue, with no cash. When a month of prepaid rent or insurance has been used, debit the expense and credit the prepaid asset, with no cash. Only the used portion moves: the total divided by the number of months.',
+        'Watch for: Cash never appears in a use-up entry, because the cash moved in the first entry; a double-count happens when revenue is recorded both when billed and when collected.',
+      ],
+    },
+    NONE: {
+      title: 'No entry needed',
+      body: [
+        'A journal entry records an exchange. If nothing has been given or received yet, there is nothing to record, no matter how important the event feels. Signing a contract, placing an order, hiring someone, receiving a quote, or a customer announcing plans: none of these change the company\'s assets, liabilities, or equity.',
+        'Routine: ask the first question of the general routine and stop there. Has either side actually given something? If both sides have only promised, no entry.',
+        'Watch for: an owner\'s personal purchase is not the business\'s transaction (the business is a separate entity); a customer who "will pay" has not paid and has not been billed; "ordered" is not "received."',
+      ],
+    },
+  },
+
+  // ---- Templates ----
+  templates: [
+    // ===== FIN =====
+    { id: 'FIN-01', cat: 'FIN', tier: 1, is: 'none', cash: 'in',
+      text: '{co} received ${amt} in cash from investors in exchange for shares of its common stock.',
+      cues: [['received ${amt} in cash', 'Cash increased'], ['in exchange for shares of its common stock', 'owners invested: Common Stock']],
+      correct: [['Cash', 'dr', 'amt'], ['Common Stock', 'cr', 'amt']],
+      distractors: [
+        ['D1', [['Common Stock', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Right accounts, flipped sides. Cash is an asset and increases with a debit; Common Stock is equity and increases with a credit.'],
+        ['D6', [['Cash', 'dr', 'amt'], ['Notes Payable', 'cr', 'amt']], 'Shares of stock mean the money came from owners, not lenders. Notes Payable is for money that must be repaid; stock does not have to be repaid.'],
+        ['D3', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'Money from investors is not earned. Nothing was sold or performed, so there is no revenue; the company gave ownership shares in exchange.'],
+        ['D9', [['Cash', 'dr', 'amt'], ['Accounts Receivable', 'cr', 'amt']], 'Investors did not owe the company anything before. This is new money from owners, which increases Common Stock.'],
+      ],
+      reasoning: 'An exchange happened: {co} received cash and gave shares of stock. Cash (asset) increased, so debit Cash {amt}. Common Stock (equity) increased because owners invested, so credit Common Stock {amt}.',
+      principle: 'Financing from owners increases Common Stock. It is never revenue, because nothing was earned.' },
+
+    { id: 'FIN-02', cat: 'FIN', tier: 1, is: 'none', cash: 'in',
+      text: '{co} borrowed ${amt} from a bank and signed a note promising to repay the amount, with interest, in two years.',
+      cues: [['borrowed ${amt} from a bank', 'Cash increased; a lender is involved'], ['signed a note', 'a formal, interest-bearing loan: Notes Payable']],
+      correct: [['Cash', 'dr', 'amt'], ['Notes Payable', 'cr', 'amt']],
+      distractors: [
+        ['D6', [['Cash', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'A signed note with a bank is Notes Payable. Accounts Payable is the informal amount owed to suppliers for things bought on account, with no note and usually no interest.'],
+        ['D1', [['Notes Payable', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Flipped. Cash came in (debit Cash), and the company now owes more (credit Notes Payable). This entry would be repaying the loan, not taking it.'],
+        ['D3', [['Cash', 'dr', 'amt'], ['Common Stock', 'cr', 'amt']], 'A bank is a lender, not an owner. Borrowed money must be repaid, so it is a liability, not Common Stock.'],
+        ['D3', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'Borrowed money is not earned. It must be repaid, so it is a liability, not revenue.'],
+      ],
+      reasoning: 'An exchange happened: {co} received cash and gave a promise to repay. Cash (asset) increased: debit Cash {amt}. Notes Payable (liability) increased: credit Notes Payable {amt}. Interest is recorded later, as time passes.',
+      principle: 'Borrowing creates a liability. The cash received is not revenue because it must be paid back.' },
+
+    { id: 'FIN-03', cat: 'FIN', tier: 1, is: 'none', cash: 'out',
+      text: '{co} bought equipment for ${amt}, paying cash.',
+      cues: [['bought equipment', 'a long-lived asset increased: Equipment'], ['paying cash', 'Cash decreased now']],
+      correct: [['Equipment', 'dr', 'amt'], ['Cash', 'cr', 'amt']],
+      distractors: [
+        ['D1', [['Cash', 'dr', 'amt'], ['Equipment', 'cr', 'amt']], 'Flipped. The company received equipment (asset up, debit) and gave cash (asset down, credit). This entry would be selling the equipment.'],
+        ['D6', [['Equipment', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'The description says paying cash, so Cash decreased now. Accounts Payable is only used when payment is put off to later.'],
+        ['D6', [['Equipment', 'dr', 'amt'], ['Notes Payable', 'cr', 'amt']], 'No note was signed and nothing was borrowed. The company paid cash, so Cash is the account that decreased.'],
+        ['D3', [['Repairs Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Buying equipment creates an asset the company will use for years. It is not a cost used up now, so it is not an expense.'],
+      ],
+      reasoning: 'An exchange happened: {co} received equipment and gave cash. Equipment (asset) increased: debit Equipment {amt}. Cash (asset) decreased: credit Cash {amt}. One asset was traded for another; nothing was used up, so there is no expense.',
+      principle: 'Buying a long-lived asset is recorded as an asset, not an expense. Its cost becomes expense gradually, over the years it is used.' },
+
+    { id: 'FIN-04', cat: 'FIN', tier: 2, is: 'none', cash: 'out', params: { partOf: 'amt' },
+      text: '{co} bought equipment costing ${amt}. It paid ${part} in cash and agreed to pay the rest in 30 days.',
+      cues: [['equipment costing ${amt}', 'the asset is recorded at its full cost'], ['paid ${part} in cash', 'Cash decreased by the part paid'], ['agreed to pay the rest in 30 days', 'the remainder is owed: Accounts Payable']],
+      correct: [['Equipment', 'dr', 'amt'], ['Cash', 'cr', 'part'], ['Accounts Payable', 'cr', 'amt-part']],
+      distractors: [
+        ['D9', [['Equipment', 'dr', 'part'], ['Cash', 'cr', 'part']], 'This records only the cash part. The company owns equipment worth the full {amt}, and it still owes {amt-part}, which must be shown as a liability.'],
+        ['D9', [['Equipment', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Only {part} of cash left. The other {amt-part} was not paid; it is owed, so it belongs in Accounts Payable, not Cash.'],
+        ['D6', [['Equipment', 'dr', 'amt'], ['Cash', 'cr', 'part'], ['Notes Payable', 'cr', 'amt-part']], 'Agreeing to pay in 30 days with no signed note is Accounts Payable. Notes Payable needs a formal note, usually with interest.'],
+      ],
+      reasoning: 'An exchange happened: {co} received equipment and gave cash plus a promise to pay the rest. Equipment (asset) increased by its full cost: debit Equipment {amt}. Cash decreased by what was paid: credit Cash {part}. The unpaid remainder is a liability: credit Accounts Payable {amt-part}. Debits {amt} = credits {part} + {amt-part}.',
+      principle: 'An asset is recorded at its full cost, and the part not paid becomes a liability. Three accounts, still balanced.' },
+
+    { id: 'FIN-05', cat: 'FIN', tier: 2, is: 'none', cash: 'out',
+      text: '{co} paid ${amt} in cash to repay the principal of a bank note it had signed last year.',
+      cues: [['paid ${amt} in cash', 'Cash decreased'], ['repay the principal of a bank note', 'the liability Notes Payable decreased']],
+      correct: [['Notes Payable', 'dr', 'amt'], ['Cash', 'cr', 'amt']],
+      distractors: [
+        ['D1', [['Cash', 'dr', 'amt'], ['Notes Payable', 'cr', 'amt']], 'Flipped. This is the entry for borrowing. Repaying reduces the liability (debit Notes Payable) and reduces Cash (credit Cash).'],
+        ['D6', [['Accounts Payable', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'A bank note is Notes Payable, not Accounts Payable. The liability being reduced must be the one that was recorded when the note was signed.'],
+        ['D3', [['Rent Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Repaying principal is not an expense; it returns borrowed money. Only the interest portion of a loan is ever an expense, and this payment was principal only.'],
+        ['D9', [['Notes Payable', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'Cash left the company, so the credit must be to Cash. This entry just swaps one liability for another, which did not happen.'],
+      ],
+      reasoning: 'An exchange happened: {co} gave cash and received back its promise to repay. Notes Payable (liability) decreased: debit Notes Payable {amt}. Cash (asset) decreased: credit Cash {amt}. No cost was used up, so no expense.',
+      principle: 'Repaying the principal of a loan reduces the liability. It is not an expense, because the money was never a cost of doing business.' },
+
+    // ===== REV =====
+    { id: 'REV-01', cat: 'REV', tier: 1, is: 'rev', cash: 'in',
+      text: '{co} performed {svc} for a customer and collected ${amt} in cash on the spot.',
+      cues: [['performed', 'the work is done, so revenue is earned now'], ['collected ${amt} in cash', 'Cash increased now']],
+      correct: [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']],
+      distractors: [
+        ['D1', [['Service Revenue', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Right accounts, flipped sides. Cash is an asset and increases with a debit; Service Revenue increases with a credit.'],
+        ['D3', [['Cash', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'Unearned Revenue is for cash collected before the work is done. The description says the service was performed, so the revenue is earned, not unearned.'],
+        ['D6', [['Accounts Receivable', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'Accounts Receivable means the customer still owes us. Here the cash was collected on the spot, so Cash is the asset that increased.'],
+        ['D9', [['Cash', 'dr', 'amt'], ['Accounts Receivable', 'cr', 'amt']], 'No receivable existed; the customer paid at the time of the service. The credit is to Service Revenue, which was earned today.'],
+      ],
+      reasoning: 'An exchange happened: {co} gave its service and received cash. Cash (asset) increased: debit Cash {amt}. The service was performed, so revenue was earned: credit Service Revenue {amt}.',
+      principle: 'Revenue is recorded when the service is provided. Here the cash arrived at the same moment, so one entry does both.' },
+
+    { id: 'REV-02', cat: 'REV', tier: 1, is: 'rev', cash: 'none',
+      text: '{co} completed {svc} for a customer and sent the customer a bill for ${amt}, due in 30 days.',
+      cues: [['completed', 'the work is done, so revenue is earned now'], ['sent the customer a bill', 'no cash yet: Accounts Receivable'], ['due in 30 days', 'cash will come later']],
+      correct: [['Accounts Receivable', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']],
+      distractors: [
+        ['D2', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'No cash has arrived; the customer was sent a bill due in 30 days. What increased is the right to collect: Accounts Receivable.'],
+        ['D1', [['Service Revenue', 'dr', 'amt'], ['Accounts Receivable', 'cr', 'amt']], 'Flipped. The receivable is an asset that increased (debit), and the revenue was earned (credit).'],
+        ['D3', [['Accounts Receivable', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'The work is completed, so the revenue is earned now. Unearned Revenue is only for cash received before the work is done, and no cash was received here at all.'],
+        ['D9', [['Accounts Receivable', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Cash did not move at all. The credit belongs to Service Revenue, because the work was completed.'],
+      ],
+      reasoning: 'An exchange happened: {co} gave its service and received the customer\'s obligation to pay. Accounts Receivable (asset) increased: debit {amt}. The work was completed, so revenue was earned: credit Service Revenue {amt}. Cash will be a separate entry when it arrives.',
+      principle: 'Revenue is recorded when the work is done, even if cash comes later. Billing creates a receivable.' },
+
+    { id: 'REV-03', cat: 'REV', tier: 1, is: 'rev', cash: 'in',
+      text: '{co} made a sale of {svc} for ${amt}.',
+      cues: [['made a sale', 'revenue is earned now'], ['for ${amt}', 'nothing said about payment terms, so assume cash']],
+      correct: [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']],
+      distractors: [
+        ['D5', [['Accounts Receivable', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'Nothing in the description says the customer was billed or will pay later. When payment terms are not mentioned, the default is that cash changed hands.'],
+        ['D1', [['Service Revenue', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Flipped. Cash came in (debit Cash) and revenue was earned (credit Service Revenue).'],
+        ['D3', [['Cash', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'A sale means the service was provided, so the revenue is earned. Unearned Revenue is for cash received before the work.'],
+        ['D9', [['Cash', 'dr', 'amt'], ['Accounts Receivable', 'cr', 'amt']], 'Nobody owed us before this sale. The sale earns revenue, so the credit is to Service Revenue.'],
+      ],
+      reasoning: 'A sale was made, so revenue is earned now: credit Service Revenue {amt}. The description does not mention a bill or a promise to pay later, so by default the customer paid cash: debit Cash {amt}.',
+      principle: 'When a description gives no payment terms, assume cash. "On account," "billed," or "will pay later" are the signals that change that.' },
+
+    { id: 'REV-04', cat: 'REV', tier: 2, is: 'rev', cash: 'in', params: { partOf: 'amt' },
+      text: '{co} performed {svc} worth ${amt}. The customer paid ${part} in cash right away and will pay the remainder next month.',
+      cues: [['performed', 'revenue is earned now, for the full amount'], ['paid ${part} in cash right away', 'Cash increased by the part paid'], ['will pay the remainder next month', 'the rest is a receivable']],
+      correct: [['Cash', 'dr', 'part'], ['Accounts Receivable', 'dr', 'amt-part'], ['Service Revenue', 'cr', 'amt']],
+      distractors: [
+        ['D9', [['Cash', 'dr', 'part'], ['Service Revenue', 'cr', 'part']], 'The work worth {amt} is done, so the full {amt} of revenue was earned. Recording only the cash part leaves out the {amt-part} the customer still owes.'],
+        ['D6', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'Only {part} of cash arrived. The remaining {amt-part} is a promise to pay, which is Accounts Receivable, not Cash.'],
+        ['D3', [['Cash', 'dr', 'part'], ['Unearned Revenue', 'dr', 'amt-part'], ['Service Revenue', 'cr', 'amt']], 'The unpaid remainder is money the customer owes us, which is a receivable (an asset). Unearned Revenue is a liability for cash we received before doing work, and that is not what happened.'],
+      ],
+      reasoning: 'An exchange happened: {co} performed the full service and received part cash plus a promise for the rest. Cash (asset) increased: debit Cash {part}. Accounts Receivable (asset) increased: debit {amt-part}. Revenue was earned in full: credit Service Revenue {amt}. Debits {part} + {amt-part} = credits {amt}.',
+      principle: 'Revenue equals the value of the work done, regardless of how much cash has arrived. Split the debit between Cash and Accounts Receivable.' },
+
+    { id: 'REV-05', cat: 'REV', tier: 2, is: 'rev', cash: 'in',
+      text: '{co} provided {svc} to a customer for ${amt}. The customer paid with a check, which {co} deposited in its bank account the same day.',
+      cues: [['provided', 'revenue is earned now'], ['paid with a check', 'a check is cash, not a receivable'], ['deposited', 'Cash increased']],
+      correct: [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']],
+      distractors: [
+        ['D6', [['Accounts Receivable', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'A check is a form of cash. Accounts Receivable is for customers who have not paid yet; this customer paid.'],
+        ['D1', [['Service Revenue', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Flipped. Cash increased (debit) and revenue was earned (credit).'],
+        ['D3', [['Cash', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'The service was already provided, so the revenue is earned. Unearned Revenue would only apply if the check had arrived before the work.'],
+        ['D9', [['Cash', 'dr', 'amt'], ['Accounts Receivable', 'cr', 'amt']], 'No receivable existed; the check paid for service provided today, so the credit is to Service Revenue.'],
+      ],
+      reasoning: 'An exchange happened: service given, check received. Checks, deposits, and electronic payments all count as Cash, so debit Cash {amt}. The service was provided, so credit Service Revenue {amt}.',
+      principle: 'Cash includes checks and bank deposits. The form of payment does not change the entry.' },
+
+
+    { id: 'REV-06', cat: 'REV', tier: 1, is: 'rev', cash: 'none',
+      text: '{co} finished {svc} for a customer today. The customer will be billed ${amt} next week and is expected to pay within 30 days of the bill.',
+      cues: [['finished', 'the work is done, so revenue is earned now'], ['will be billed ${amt} next week', 'no cash yet; the customer already owes us for finished work']],
+      correct: [['Accounts Receivable', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']],
+      distractors: [
+        ['D2', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'No cash has arrived, and none will for weeks. What the company has today is the right to collect: Accounts Receivable.'],
+        ['D3', [['Accounts Receivable', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'The work is finished, so the revenue is earned now. Unearned Revenue is for cash received before the work, and no cash was received at all.'],
+        ['D1', [['Service Revenue', 'dr', 'amt'], ['Accounts Receivable', 'cr', 'amt']], 'Flipped. The receivable (asset) increased, which is a debit; revenue earned is a credit.'],
+        ['D9', [['Unearned Revenue', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'Nobody prepaid, so there is no Unearned Revenue to reduce. The customer owes us, which is a receivable.'],
+      ],
+      reasoning: 'An exchange happened today: {co} gave its finished service and received the customer\'s obligation to pay. Revenue is earned when the work is done, not when the bill goes out and not when cash arrives: credit Service Revenue {amt}. The customer owes {amt}: debit Accounts Receivable {amt}.',
+      principle: 'Revenue recognition: revenue is recorded when the service is provided, even if the bill and the cash come later.' },
+
+    { id: 'REV-07', cat: 'REV', tier: 1, is: 'rev', cash: 'in',
+      text: 'A customer paid {co} ${amt} in cash right after {co} finished {svc} for them.',
+      cues: [['paid {co} ${amt} in cash', 'Cash increased now'], ['right after {co} finished', 'the work is done, so revenue is earned now']],
+      correct: [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']],
+      distractors: [
+        ['D3', [['Cash', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'The work was finished before the payment, so the revenue is earned. Unearned Revenue only applies when the cash comes before the work.'],
+        ['D6', [['Accounts Receivable', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'The customer paid, so nothing is owed. Cash is the asset that increased, not a receivable.'],
+        ['D1', [['Service Revenue', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Flipped. Cash increased (debit) and revenue was earned (credit).'],
+        ['D9', [['Cash', 'dr', 'amt'], ['Accounts Receivable', 'cr', 'amt']], 'No receivable was ever recorded; the customer paid at the time of service. The credit is to Service Revenue.'],
+      ],
+      reasoning: 'An exchange happened: {co} gave its service and received cash. Cash (asset) increased: debit Cash {amt}. The work was finished, so revenue was earned: credit Service Revenue {amt}.',
+      principle: 'When the work and the cash happen together, one entry records both the asset and the revenue.' },
+
+    { id: 'REV-08', cat: 'REV', tier: 2, is: 'rev', cash: 'in', params: { partOf: 'amt' },
+      text: '{co} completed a {svc} job for ${amt}. The customer paid ${part} by check today and signed an agreement to pay the rest within 60 days.',
+      cues: [['completed', 'revenue is earned now, for the full amount'], ['paid ${part} by check', 'Cash increased by the part paid; a check is cash'], ['pay the rest within 60 days', 'the remainder is a receivable']],
+      correct: [['Cash', 'dr', 'part'], ['Accounts Receivable', 'dr', 'amt-part'], ['Service Revenue', 'cr', 'amt']],
+      distractors: [
+        ['D9', [['Cash', 'dr', 'part'], ['Service Revenue', 'cr', 'part']], 'The job is complete, so all {amt} of revenue is earned today. Leaving out the {amt-part} still owed understates both revenue and assets.'],
+        ['D6', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'Only {part} arrived. The other {amt-part} is a promise to pay, which is Accounts Receivable, not Cash.'],
+        ['D6', [['Cash', 'dr', 'part'], ['Notes Payable', 'dr', 'amt-part'], ['Service Revenue', 'cr', 'amt']], 'The customer owes {co}, not the other way around. Money owed to the company is a receivable (an asset), and Notes Payable is a liability anyway.'],
+      ],
+      reasoning: 'An exchange happened: {co} completed the job and received part cash plus a promise for the rest. Cash (asset) increased: debit Cash {part}. Accounts Receivable (asset) increased: debit {amt-part}. Revenue was earned in full: credit Service Revenue {amt}. Debits {part} + {amt-part} = credits {amt}.',
+      principle: 'Revenue equals the value of the work completed. How the customer pays only changes which assets are debited.' },
+
+    { id: 'REV-09', cat: 'REV', tier: 2, is: 'rev', cash: 'none',
+      text: '{co} earned ${amt} by providing {svc} this week. The work is complete, but {co} has not yet sent the customer a bill; it plans to bill on the first of next month.',
+      cues: [['earned ${amt}', 'revenue now'], ['The work is complete', 'the earning event has happened'], ['has not yet sent the customer a bill', 'no cash and no bill, but the customer still owes for completed work']],
+      correct: [['Accounts Receivable', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']],
+      distractors: [
+        ['D2', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'No cash has been received. The customer has not even been billed yet. What exists is the customer\'s obligation to pay for completed work: a receivable.'],
+        ['D3', [['Accounts Receivable', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'The work is complete, so the revenue is earned, not unearned. Unearned Revenue requires cash received before the work.'],
+        ['D1', [['Service Revenue', 'dr', 'amt'], ['Accounts Receivable', 'cr', 'amt']], 'Flipped. The receivable increased (debit) and revenue was earned (credit).'],
+        ['D9', [['Unearned Revenue', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'There is no Unearned Revenue to reduce because the customer never prepaid.'],
+      ],
+      reasoning: 'An exchange happened this week: {co} provided the service and the customer became obligated to pay. Revenue is earned when the work is done, whether or not a bill has gone out: credit Service Revenue {amt}. The customer owes {amt}: debit Accounts Receivable {amt}. Sending the bill later needs no entry; collecting it will.',
+      principle: 'Revenue recognition does not wait for the invoice. Completed work creates revenue and a receivable at the same time.' },
+
+    { id: 'REV-10', cat: 'REV', tier: 3, is: 'rev', cash: 'none',
+      text: 'On the last day of the month, {co} provided {svc} worth ${amt} to a customer and sent the bill the same day. The customer\'s payment will not arrive until next month.',
+      cues: [['On the last day of the month', 'which month gets the revenue matters'], ['provided', 'revenue is earned now, this month'], ['payment will not arrive until next month', 'no cash this month: a receivable']],
+      correct: [['Accounts Receivable', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']],
+      distractors: [
+        ['D2', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'The cash arrives next month. This month the company has a receivable, not cash.'],
+        ['D3', [['Accounts Receivable', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'The service was provided this month, so the revenue belongs to this month. Nothing is unearned, and nothing was prepaid.'],
+        ['D1', [['Service Revenue', 'dr', 'amt'], ['Accounts Receivable', 'cr', 'amt']], 'Flipped. The receivable increased (debit) and revenue was earned (credit).'],
+        ['D9', [['Accounts Receivable', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Cash did not move in either direction. The credit is to Service Revenue, earned by providing the service.'],
+      ],
+      reasoning: 'An exchange happened this month: the service was provided and the customer owes for it. Revenue is recorded in the month the work is done, even on the last day, and even though cash comes next month: credit Service Revenue {amt}, debit Accounts Receivable {amt}. Next month\'s collection will be debit Cash, credit Accounts Receivable, with no revenue.',
+      principle: 'Revenue belongs to the period in which the service is provided. The timing of the cash does not move it.' },
+
+    { id: 'REV-11', cat: 'REV', tier: 2, is: 'rev', cash: 'in',
+      text: '{co} provided {svc} to a customer for ${amt}. The customer paid by card, and the card company deposited the money into {co}\'s bank account the same day.',
+      cues: [['provided', 'revenue is earned now'], ['paid by card', 'a card payment that is deposited the same day is cash'], ['deposited the money', 'Cash increased']],
+      correct: [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']],
+      distractors: [
+        ['D6', [['Accounts Receivable', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'The money reached {co}\'s bank account the same day, so Cash increased. A receivable would mean {co} is still waiting to be paid.'],
+        ['D3', [['Cash', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'The service was already provided, so the revenue is earned, not unearned.'],
+        ['D1', [['Service Revenue', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Flipped. Cash increased (debit) and revenue was earned (credit).'],
+      ],
+      reasoning: 'An exchange happened: service given, payment received. Money deposited in the bank is Cash, however the customer paid: debit Cash {amt}. The service was provided: credit Service Revenue {amt}.',
+      principle: 'Cash means money in hand or in the bank. Checks, deposits, and card payments that settle the same day are all Cash.' },
+
+    // ===== EXP =====
+    { id: 'EXP-01', cat: 'EXP', tier: 1, is: 'exp', cash: 'out',
+      text: '{co} paid ${amt} in cash for this month\'s rent on its office.',
+      cues: [['paid ${amt} in cash', 'Cash decreased now'], ['this month\'s rent', 'the benefit is being used now: an expense']],
+      correct: [['Rent Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']],
+      distractors: [
+        ['D3', [['Prepaid Rent', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Prepaid Rent is for rent paid for future months. This is this month\'s rent, so the benefit is being used now and it is an expense.'],
+        ['D1', [['Cash', 'dr', 'amt'], ['Rent Expense', 'cr', 'amt']], 'Flipped. Expenses increase with a debit, and Cash decreased, which is a credit.'],
+        ['D6', [['Rent Expense', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'The rent was paid in cash, so Cash decreased. Accounts Payable is only used when the bill will be paid later.'],
+        ['D3', [['Equipment', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Rent is the use of someone else\'s building for a month. Nothing was bought that the company owns.'],
+      ],
+      reasoning: 'An exchange happened: {co} gave cash and received the use of its office for this month. The benefit is used up in this period, so Rent Expense increased: debit Rent Expense {amt}. Cash decreased: credit Cash {amt}.',
+      principle: 'A cost is an expense in the period it is used up. Rent for the current month is used up now.' },
+
+    { id: 'EXP-02', cat: 'EXP', tier: 1, is: 'exp', cash: 'none',
+      text: '{co} received a ${amt} bill from the utility company for electricity used this month. {co} will pay the bill next month.',
+      cues: [['received a ${amt} bill', 'an obligation now: Accounts Payable'], ['electricity used this month', 'the cost is used up: expense now'], ['will pay the bill next month', 'no cash yet']],
+      correct: [['Utilities Expense', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']],
+      distractors: [
+        ['D2', [['Utilities Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'The bill will be paid next month, so no cash has left yet. The expense is recorded now anyway, and what increased is the amount owed: Accounts Payable.'],
+        ['D1', [['Accounts Payable', 'dr', 'amt'], ['Utilities Expense', 'cr', 'amt']], 'Flipped. The expense increased (debit), and the liability increased (credit).'],
+        ['D6', [['Utilities Expense', 'dr', 'amt'], ['Notes Payable', 'cr', 'amt']], 'A bill from a supplier is Accounts Payable. Notes Payable needs a formal signed note, usually with a bank.'],
+        ['D3', [['Supplies', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'Electricity already used is not an item on hand for later. It is a cost used up this month, so it is an expense.'],
+      ],
+      reasoning: 'An exchange happened: {co} used electricity and now owes for it. The cost was used up this month, so Utilities Expense increased: debit {amt}. Nothing was paid, so the obligation is a liability: credit Accounts Payable {amt}. Paying next month will be a separate entry.',
+      principle: 'An expense is recorded when the cost is incurred, even if it is paid later. Receiving a bill creates a payable.' },
+
+    { id: 'EXP-03', cat: 'EXP', tier: 1, is: 'exp', cash: 'out',
+      text: '{co} paid its employees ${amt} in cash for work they performed this week.',
+      cues: [['paid its employees ${amt} in cash', 'Cash decreased'], ['work they performed this week', 'the cost of their labor has been used: expense now']],
+      correct: [['Salaries and Wages Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']],
+      distractors: [
+        ['D1', [['Cash', 'dr', 'amt'], ['Salaries and Wages Expense', 'cr', 'amt']], 'Flipped. Expenses increase with a debit; Cash decreased, which is a credit.'],
+        ['D6', [['Salaries and Wages Expense', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'The employees were paid in cash, so Cash decreased. Accounts Payable would mean the company still owes them.'],
+        ['D3', [['Equipment', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Paying workers for a week of work does not buy the company an asset. The work is used up as it is done, so it is an expense.'],
+        ['D3', [['Prepaid Rent', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Nothing was paid ahead. The work was already done this week, so the cost is used up now and is an expense.'],
+      ],
+      reasoning: 'An exchange happened: {co} received a week of work and gave cash. The work has been used, so Salaries and Wages Expense increased: debit {amt}. Cash decreased: credit Cash {amt}.',
+      principle: 'Wages are an expense in the period the work is done. Here the work and the payment are in the same week.' },
+
+    { id: 'EXP-04', cat: 'EXP', tier: 2, is: 'exp', cash: 'out', params: { partOf: 'amt' },
+      text: '{co}\'s advertising agency sent a ${amt} bill for ads that ran this month. {co} paid ${part} right away and will pay the rest in 30 days.',
+      cues: [['ads that ran this month', 'the cost is used up: expense now, full amount'], ['paid ${part} right away', 'Cash decreased by the part paid'], ['will pay the rest in 30 days', 'the remainder is owed: Accounts Payable']],
+      correct: [['Advertising Expense', 'dr', 'amt'], ['Cash', 'cr', 'part'], ['Accounts Payable', 'cr', 'amt-part']],
+      distractors: [
+        ['D9', [['Advertising Expense', 'dr', 'part'], ['Cash', 'cr', 'part']], 'The ads cost {amt} and they already ran, so the full {amt} is an expense now. The unpaid {amt-part} must be recorded as a payable.'],
+        ['D6', [['Advertising Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Only {part} of cash left. The rest is owed, so it is Accounts Payable, not Cash.'],
+        ['D1', [['Cash', 'dr', 'part'], ['Accounts Payable', 'dr', 'amt-part'], ['Advertising Expense', 'cr', 'amt']], 'Every side is flipped. The expense increased (debit), Cash decreased (credit), and the amount owed increased (credit).'],
+      ],
+      reasoning: 'An exchange happened: {co} received advertising and gave cash plus a promise to pay the rest. The ads ran, so the full cost is used up: debit Advertising Expense {amt}. Cash decreased by what was paid: credit Cash {part}. The remainder is owed: credit Accounts Payable {amt-part}. Debits {amt} = credits {part} + {amt-part}.',
+      principle: 'The expense is the full cost incurred. The credit side is split between what was paid and what is still owed.' },
+
+    { id: 'EXP-05', cat: 'EXP', tier: 2, is: 'exp', cash: 'out',
+      text: '{co} paid ${amt} to a mechanic for repairs to its delivery van. The van was repaired and returned the same day.',
+      cues: [['paid ${amt}', 'Cash decreased'], ['repairs', 'keeping an existing asset working: an expense, not a new asset'], ['repaired and returned the same day', 'the benefit was received now']],
+      correct: [['Repairs Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']],
+      distractors: [
+        ['D3', [['Equipment', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'A repair keeps the van working; it does not create a new asset or make the van worth more for years to come. Routine repairs are an expense.'],
+        ['D1', [['Cash', 'dr', 'amt'], ['Repairs Expense', 'cr', 'amt']], 'Flipped. The expense increased (debit) and Cash decreased (credit).'],
+        ['D6', [['Repairs Expense', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'The mechanic was paid, so Cash decreased. Accounts Payable is only for bills to be paid later.'],
+        ['D3', [['Supplies', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'A repair is a service received, not an item on hand to use later. The benefit arrived when the van was fixed.'],
+      ],
+      reasoning: 'An exchange happened: {co} received a repair and gave cash. The repair\'s benefit is used in this period, so Repairs Expense increased: debit {amt}. Cash decreased: credit Cash {amt}.',
+      principle: 'Spending that keeps an asset in working order is an expense. Spending that buys a new long-lived asset is recorded as the asset.' },
+
+    { id: 'EXP-06', cat: 'EXP', tier: 3, is: 'exp', cash: 'out',
+      text: '{co} bought ${amt} of printed flyers for cash and handed all of them out at a street fair the same afternoon.',
+      cues: [['bought ${amt} of printed flyers for cash', 'Cash decreased'], ['handed all of them out', 'nothing is left to be an asset: the cost is used up now']],
+      correct: [['Advertising Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']],
+      distractors: [
+        ['D3', [['Supplies', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Supplies is an asset for items still on hand for future use. All the flyers were handed out the same afternoon, so there is nothing left on hand; the cost is an expense now.'],
+        ['D1', [['Cash', 'dr', 'amt'], ['Advertising Expense', 'cr', 'amt']], 'Flipped. The expense increased (debit) and Cash decreased (credit).'],
+        ['D3', [['Prepaid Rent', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Nothing was prepaid for a future period. The flyers were used immediately.'],
+        ['D6', [['Advertising Expense', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'The flyers were bought for cash, so Cash decreased; nothing is owed.'],
+      ],
+      reasoning: 'An exchange happened: {co} received flyers and gave cash. Because every flyer was used the same day, no asset remains; the cost was used up now: debit Advertising Expense {amt}. Cash decreased: credit Cash {amt}.',
+      principle: 'Whether a purchase is an asset or an expense depends on whether any benefit remains for the future. Nothing remains here.' },
+
+
+    { id: 'EXP-07', cat: 'EXP', tier: 1, is: 'exp', cash: 'out',
+      text: '{co} paid ${amt} in cash for its internet and phone service for the current month.',
+      cues: [['paid ${amt} in cash', 'Cash decreased now'], ['for the current month', 'the service is being used now: an expense']],
+      correct: [['Utilities Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']],
+      distractors: [
+        ['D3', [['Prepaid Rent', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'This pays for the current month, not for future months, so nothing is prepaid. The benefit is used up now.'],
+        ['D1', [['Cash', 'dr', 'amt'], ['Utilities Expense', 'cr', 'amt']], 'Flipped. The expense increased (debit) and Cash decreased (credit).'],
+        ['D6', [['Utilities Expense', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'The bill was paid in cash, so Cash decreased. Accounts Payable is only for amounts to be paid later.'],
+        ['D3', [['Equipment', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Monthly service is not a long-lived asset the company owns. It is a cost used up this month.'],
+      ],
+      reasoning: 'An exchange happened: {co} gave cash and received this month\'s service. The benefit is used up in the current month, so it is an expense: debit Utilities Expense {amt}. Cash decreased: credit Cash {amt}.',
+      principle: 'Expense recognition: a cost is an expense in the period it is used. Service for the current month is used now.' },
+
+    { id: 'EXP-08', cat: 'EXP', tier: 1, is: 'exp', cash: 'none',
+      text: '{co} ran online ads this month and received a ${amt} invoice from the ad platform, due in 30 days.',
+      cues: [['ran online ads this month', 'the benefit was received this month: expense now'], ['received a ${amt} invoice', 'the company now owes: Accounts Payable'], ['due in 30 days', 'no cash yet']],
+      correct: [['Advertising Expense', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']],
+      distractors: [
+        ['D2', [['Advertising Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'The invoice is due in 30 days, so no cash has left. The expense is recorded now anyway, and what increased is Accounts Payable.'],
+        ['D1', [['Accounts Payable', 'dr', 'amt'], ['Advertising Expense', 'cr', 'amt']], 'Flipped. The expense increased (debit) and the liability increased (credit).'],
+        ['D3', [['Supplies', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'Ads that already ran are not an item on hand. Their benefit was used this month, so the cost is an expense.'],
+        ['D6', [['Advertising Expense', 'dr', 'amt'], ['Notes Payable', 'cr', 'amt']], 'An invoice from a supplier is Accounts Payable. Notes Payable requires a formal signed note.'],
+      ],
+      reasoning: 'An exchange happened: {co} received advertising and now owes for it. The ads ran this month, so the cost is used up: debit Advertising Expense {amt}. Nothing was paid yet: credit Accounts Payable {amt}.',
+      principle: 'An expense is recorded when the benefit is received, not when the invoice is paid.' },
+
+    { id: 'EXP-09', cat: 'EXP', tier: 2, is: 'exp', cash: 'out', params: { partOf: 'amt' },
+      text: '{co} received a ${amt} invoice from a repair shop for fixing its copier last week. {co} paid ${part} today and will pay the rest next month.',
+      cues: [['fixing its copier last week', 'the repair is done: expense now, full amount'], ['paid ${part} today', 'Cash decreased by the part paid'], ['will pay the rest next month', 'the remainder is owed: Accounts Payable']],
+      correct: [['Repairs Expense', 'dr', 'amt'], ['Cash', 'cr', 'part'], ['Accounts Payable', 'cr', 'amt-part']],
+      distractors: [
+        ['D9', [['Repairs Expense', 'dr', 'part'], ['Cash', 'cr', 'part']], 'The repair cost {amt} and is finished, so the full {amt} is an expense now. The unpaid {amt-part} must be shown as a payable.'],
+        ['D6', [['Repairs Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Only {part} of cash was paid. The rest is owed, so it is Accounts Payable, not Cash.'],
+        ['D3', [['Equipment', 'dr', 'amt'], ['Cash', 'cr', 'part'], ['Accounts Payable', 'cr', 'amt-part']], 'A repair keeps the copier working; it does not create a new asset. Routine repairs are an expense.'],
+      ],
+      reasoning: 'An exchange happened: {co} received a repair and gave cash plus a promise to pay the rest. The repair is done, so its full cost is an expense: debit Repairs Expense {amt}. Cash decreased by what was paid: credit Cash {part}. The remainder is owed: credit Accounts Payable {amt-part}.',
+      principle: 'The expense is the full cost incurred. The credits are split between what was paid now and what is still owed.' },
+
+    { id: 'EXP-10', cat: 'EXP', tier: 2, is: 'exp', cash: 'out',
+      text: '{co} paid ${amt} in cash to a contractor who finished repainting the office lobby yesterday.',
+      cues: [['paid ${amt} in cash', 'Cash decreased'], ['repainting', 'maintenance of an existing space: an expense, not a new asset'], ['finished', 'the benefit has been received']],
+      correct: [['Repairs Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']],
+      distractors: [
+        ['D3', [['Equipment', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Repainting keeps the lobby in good condition; it does not give the company a new long-lived asset. Maintenance is an expense.'],
+        ['D3', [['Prepaid Rent', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Nothing was paid ahead for a future period. The work is finished and its benefit received.'],
+        ['D1', [['Cash', 'dr', 'amt'], ['Repairs Expense', 'cr', 'amt']], 'Flipped. The expense increased (debit) and Cash decreased (credit).'],
+        ['D6', [['Repairs Expense', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'The contractor was paid in cash, so Cash decreased; nothing is owed.'],
+      ],
+      reasoning: 'An exchange happened: {co} received a finished paint job and gave cash. Maintenance of an existing space is a cost used up now: debit Repairs Expense {amt}. Cash decreased: credit Cash {amt}.',
+      principle: 'Spending that maintains what the company already has is an expense. Spending that buys a new long-lived asset is recorded as the asset.' },
+
+    { id: 'EXP-11', cat: 'EXP', tier: 3, is: 'exp', cash: 'out',
+      text: '{co} used its office all month and paid the ${amt} rent in cash on the last day of the month.',
+      cues: [['used its office all month', 'the benefit has already been received: expense'], ['paid the ${amt} rent in cash', 'Cash decreased'], ['last day of the month', 'the rent belongs to this month']],
+      correct: [['Rent Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']],
+      distractors: [
+        ['D3', [['Prepaid Rent', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Prepaid Rent is for months not yet used. This payment is for a month already used, so it is an expense.'],
+        ['D9', [['Rent Expense', 'dr', 'amt'], ['Prepaid Rent', 'cr', 'amt']], 'No Prepaid Rent was ever recorded; the rent was never paid ahead. Cash is what decreased.'],
+        ['D1', [['Cash', 'dr', 'amt'], ['Rent Expense', 'cr', 'amt']], 'Flipped. The expense increased (debit) and Cash decreased (credit).'],
+        ['D6', [['Rent Expense', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'The rent was paid, so Cash decreased; nothing is owed to the landlord.'],
+      ],
+      reasoning: 'An exchange happened: {co} used the office for the month and paid for it. The benefit is fully used, so the cost is an expense of this month: debit Rent Expense {amt}. Cash decreased: credit Cash {amt}.',
+      principle: 'Paying at the end of the period for a benefit already used is an expense, not a prepayment. Compare: paying at the start for future months is a prepaid asset.' },
+
+    { id: 'EXP-12', cat: 'EXP', tier: 2, is: 'exp', cash: 'none',
+      text: '{co} received a ${amt} electricity bill for last month\'s usage. Nothing had been recorded for it yet, and {co} will pay the bill next week.',
+      cues: [['electricity bill for last month\'s usage', 'the electricity was used: expense now'], ['Nothing had been recorded for it yet', 'this is the first entry for this cost, so record the expense'], ['will pay the bill next week', 'no cash yet: Accounts Payable']],
+      correct: [['Utilities Expense', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']],
+      distractors: [
+        ['D2', [['Utilities Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'The bill will be paid next week, so no cash has left. The expense is recorded now, and the amount owed is Accounts Payable.'],
+        ['D1', [['Accounts Payable', 'dr', 'amt'], ['Utilities Expense', 'cr', 'amt']], 'Flipped. The expense increased (debit) and the liability increased (credit).'],
+        ['D3', [['Supplies', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'Electricity already used is not something on hand for later. It is a cost used up, so it is an expense.'],
+        ['D6', [['Utilities Expense', 'dr', 'amt'], ['Notes Payable', 'cr', 'amt']], 'A utility bill is Accounts Payable. Notes Payable requires a formal signed note.'],
+      ],
+      reasoning: 'An exchange happened: {co} used electricity and now owes the utility. The cost has been used up: debit Utilities Expense {amt}. It has not been paid: credit Accounts Payable {amt}. Paying next week will be a separate entry with no expense.',
+      principle: 'An expense is recorded when the cost is incurred. If the bill is the first record of it, record the expense and the payable together.' },
+
+    { id: 'EXP-13', cat: 'EXP', tier: 1, is: 'exp', cash: 'out',
+      text: '{co} paid ${amt} in cash to a staffing agency for temporary workers who staffed its event last weekend.',
+      cues: [['paid ${amt} in cash', 'Cash decreased'], ['staffed its event last weekend', 'the work is done: the cost is used up now']],
+      correct: [['Salaries and Wages Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']],
+      distractors: [
+        ['D3', [['Prepaid Rent', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Nothing was paid ahead; the work already happened last weekend. The cost is used up now.'],
+        ['D1', [['Cash', 'dr', 'amt'], ['Salaries and Wages Expense', 'cr', 'amt']], 'Flipped. The expense increased (debit) and Cash decreased (credit).'],
+        ['D6', [['Salaries and Wages Expense', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'The agency was paid in cash, so Cash decreased; nothing is owed.'],
+        ['D3', [['Equipment', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Paying for workers\' time does not buy an asset. Their work was used up at the event.'],
+      ],
+      reasoning: 'An exchange happened: {co} received a weekend of work and gave cash. The work is used up: debit Salaries and Wages Expense {amt}. Cash decreased: credit Cash {amt}.',
+      principle: 'Labor is an expense in the period the work is performed. Paying an agency instead of the workers directly does not change that.' },
+
+    // ===== PRE =====
+    { id: 'PRE-01', cat: 'PRE', tier: 1, is: 'none', cash: 'out', params: { n: [3, 6, 12] },
+      text: '{co} paid ${amt} in cash for a {n}-month insurance policy. Coverage begins next week.',
+      cues: [['paid ${amt} in cash', 'Cash decreased now'], ['{n}-month insurance policy', 'the benefit is spread over future months'], ['Coverage begins next week', 'nothing has been used yet: an asset, not an expense']],
+      correct: [['Prepaid Insurance', 'dr', 'amt'], ['Cash', 'cr', 'amt']],
+      distractors: [
+        ['D3', [['Insurance Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Coverage has not even started, so none of the policy has been used up. Paying ahead for a future benefit creates an asset, Prepaid Insurance.'],
+        ['D1', [['Cash', 'dr', 'amt'], ['Prepaid Insurance', 'cr', 'amt']], 'Flipped. The company received a future benefit (asset up, debit) and gave cash (asset down, credit).'],
+        ['D4', [['Prepaid Insurance', 'dr', 'amt/n'], ['Cash', 'cr', 'amt/n']], 'The whole {amt} was paid now, so the whole amount is recorded now. The monthly share of {amt/n} will move to expense one month at a time, later.'],
+        ['D6', [['Prepaid Insurance', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'The policy was paid in cash, so Cash decreased. Nothing is owed to the insurer.'],
+      ],
+      reasoning: 'An exchange happened: {co} gave cash and received {n} months of future coverage. The benefit is still ahead, so it is an asset: debit Prepaid Insurance {amt}. Cash decreased: credit Cash {amt}. No expense yet.',
+      principle: 'Cash paid before the benefit is used creates a prepaid asset. The expense comes later, month by month.' },
+
+    { id: 'PRE-02', cat: 'PRE', tier: 1, is: 'none', cash: 'in',
+      text: '{co} received ${amt} in cash from a customer for {svc} that {co} will perform next month.',
+      cues: [['received ${amt} in cash', 'Cash increased now'], ['will perform next month', 'the work is not done, so no revenue yet; the company owes the work']],
+      correct: [['Cash', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']],
+      distractors: [
+        ['D2', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'The work will be performed next month, so nothing has been earned yet. Cash arriving early does not make it revenue; it creates a liability to do the work.'],
+        ['D1', [['Unearned Revenue', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Flipped. Cash increased (debit), and the liability to perform the work increased (credit).'],
+        ['D6', [['Cash', 'dr', 'amt'], ['Accounts Receivable', 'cr', 'amt']], 'The customer did not owe us anything before; this is a prepayment, not the collection of a receivable.'],
+        ['D9', [['Accounts Receivable', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'The customer paid, so Cash increased. Nobody owes us anything; we owe them the work.'],
+      ],
+      reasoning: 'An exchange happened: {co} received cash and gave a promise to perform. Cash (asset) increased: debit Cash {amt}. The company now owes the customer the service, a liability: credit Unearned Revenue {amt}. Revenue will be recorded next month when the work is done.',
+      principle: 'Cash received before the work is done is a liability, not revenue. Revenue waits for the performance.' },
+
+    { id: 'PRE-03', cat: 'PRE', tier: 1, is: 'none', cash: 'none',
+      text: '{co} bought ${amt} of supplies on account. The supplies were put in the storeroom to be used over the coming months.',
+      cues: [['bought ${amt} of supplies', 'items on hand for future use: the asset Supplies'], ['on account', 'no cash now: Accounts Payable'], ['to be used over the coming months', 'nothing used yet: not an expense']],
+      correct: [['Supplies', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']],
+      distractors: [
+        ['D3', [['Supplies Expense', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'The supplies are in the storeroom, unused. Until they are used, they are an asset. The expense is recorded later, as they are consumed.'],
+        ['D2', [['Supplies', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'On account means the company will pay later. No cash left yet; what increased is Accounts Payable.'],
+        ['D1', [['Accounts Payable', 'dr', 'amt'], ['Supplies', 'cr', 'amt']], 'Flipped. The asset Supplies increased (debit), and the liability increased (credit).'],
+        ['D6', [['Supplies', 'dr', 'amt'], ['Notes Payable', 'cr', 'amt']], 'Buying on account from a supplier is Accounts Payable. No note was signed.'],
+      ],
+      reasoning: 'An exchange happened: {co} received supplies and gave a promise to pay. Supplies (asset) increased: debit Supplies {amt}. Nothing was paid, so Accounts Payable (liability) increased: credit {amt}. No expense until the supplies are used.',
+      principle: 'Supplies on hand are an asset. They become an expense as they are used up.' },
+
+    { id: 'PRE-04', cat: 'PRE', tier: 2, is: 'none', cash: 'in',
+      text: '{co} sold ${amt} of gift cards to customers for cash. None of the cards have been redeemed yet.',
+      cues: [['sold ${amt} of gift cards', 'customers paid for future service'], ['for cash', 'Cash increased now'], ['None of the cards have been redeemed yet', 'no service provided, so no revenue yet']],
+      correct: [['Cash', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']],
+      distractors: [
+        ['D2', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'A gift card is a promise to provide service later. Until a card is redeemed, nothing has been earned, so the cash is a liability, not revenue.'],
+        ['D1', [['Unearned Revenue', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Flipped. Cash came in (debit) and the obligation to customers increased (credit). This entry would be the redemption, if it credited revenue.'],
+        ['D6', [['Cash', 'dr', 'amt'], ['Accounts Receivable', 'cr', 'amt']], 'No customer owed us before. This is cash received ahead of service, which is Unearned Revenue.'],
+        ['D3', [['Cash', 'dr', 'amt'], ['Common Stock', 'cr', 'amt']], 'Customers are not owners. Their cash creates an obligation to provide service, not an ownership claim.'],
+      ],
+      reasoning: 'An exchange happened: {co} received cash and gave cards that promise future service. Cash (asset) increased: debit {amt}. The company owes the service, a liability: credit Unearned Revenue {amt}. Revenue is recorded as cards are redeemed.',
+      principle: 'Selling a gift card is receiving cash before performing. The sale of the card is not revenue; the redemption is.' },
+
+    { id: 'PRE-05', cat: 'PRE', tier: 2, is: 'none', cash: 'out', params: { n: [3, 6, 12] },
+      text: '{co} paid ${amt} in cash for {n} months of office rent in advance. The rental period starts next month.',
+      cues: [['paid ${amt} in cash', 'Cash decreased now'], ['{n} months of office rent in advance', 'paid ahead: the asset Prepaid Rent'], ['starts next month', 'no rent used yet: not an expense']],
+      correct: [['Prepaid Rent', 'dr', 'amt'], ['Cash', 'cr', 'amt']],
+      distractors: [
+        ['D3', [['Rent Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'None of the {n} months has been used; the period starts next month. Rent paid ahead is an asset until each month passes.'],
+        ['D4', [['Prepaid Rent', 'dr', 'amt/n'], ['Cash', 'cr', 'amt/n']], 'The full {amt} left the bank account, so the full amount is recorded now. One month\'s share, {amt/n}, becomes expense later as each month is used.'],
+        ['D1', [['Cash', 'dr', 'amt'], ['Prepaid Rent', 'cr', 'amt']], 'Flipped. The company received a future benefit (asset up, debit) and gave cash (credit).'],
+        ['D6', [['Prepaid Rent', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'The rent was paid in cash, so Cash decreased. Nothing is owed to the landlord.'],
+      ],
+      reasoning: 'An exchange happened: {co} gave cash and received the right to use the office for {n} future months. That right is an asset: debit Prepaid Rent {amt}. Cash decreased: credit Cash {amt}. Each month, {amt/n} will move to Rent Expense.',
+      principle: 'Paying ahead creates a prepaid asset for the full amount paid. The expense is recognized as each period is used.' },
+
+    { id: 'PRE-06', cat: 'PRE', tier: 2, is: 'none', cash: 'in',
+      text: 'A customer paid {co} a ${amt} deposit toward a {svc} project. {co} will begin the work in two weeks.',
+      cues: [['paid {co} a ${amt} deposit', 'Cash increased now; a deposit is payment ahead of work'], ['will begin the work in two weeks', 'nothing earned yet']],
+      correct: [['Cash', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']],
+      distractors: [
+        ['D2', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'A deposit arrives before the work. Nothing has been performed, so nothing is earned; the company owes the customer the work.'],
+        ['D6', [['Cash', 'dr', 'amt'], ['Accounts Receivable', 'cr', 'amt']], 'Collecting a receivable means the customer owed us for work already done. Here no work has been done; this is cash ahead of performance.'],
+        ['D1', [['Unearned Revenue', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Flipped. Cash increased (debit) and the liability to perform increased (credit).'],
+        ['D3', [['Cash', 'dr', 'amt'], ['Common Stock', 'cr', 'amt']], 'A customer deposit is not an investment by an owner. It is a liability to deliver the project.'],
+      ],
+      reasoning: 'An exchange happened: {co} received cash and gave a promise to do the project. Cash (asset) increased: debit {amt}. The obligation to perform is a liability: credit Unearned Revenue {amt}.',
+      principle: 'A deposit is cash received before performance, so it is Unearned Revenue until the work is done.' },
+
+
+    { id: 'PRE-07', cat: 'PRE', tier: 1, is: 'none', cash: 'in',
+      text: 'A customer paid {co} ${amt} in cash today for {svc} scheduled for next week.',
+      cues: [['paid {co} ${amt} in cash today', 'Cash increased now'], ['scheduled for next week', 'the work has not been done: no revenue yet, a liability instead']],
+      correct: [['Cash', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']],
+      distractors: [
+        ['D2', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'The service is next week, so nothing has been earned. Cash arriving early creates an obligation to do the work, not revenue.'],
+        ['D1', [['Unearned Revenue', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Flipped. Cash increased (debit) and the liability to perform increased (credit).'],
+        ['D6', [['Cash', 'dr', 'amt'], ['Accounts Receivable', 'cr', 'amt']], 'The customer did not owe anything before; this is a prepayment, not the collection of a receivable.'],
+        ['D3', [['Cash', 'dr', 'amt'], ['Common Stock', 'cr', 'amt']], 'A customer is not an owner. Their money is a liability to deliver the service.'],
+      ],
+      reasoning: 'An exchange happened: {co} received cash and gave a promise to perform next week. Cash (asset) increased: debit {amt}. The company owes the service: credit Unearned Revenue {amt}. Next week, when the work is done, the liability becomes revenue.',
+      principle: 'Cash before the work is a liability. Revenue waits for the performance.' },
+
+    { id: 'PRE-08', cat: 'PRE', tier: 2, is: 'none', cash: 'out',
+      text: '{co} purchased ${amt} of office supplies for cash and put them in the supply closet for use over the next several months.',
+      cues: [['purchased ${amt} of office supplies for cash', 'Cash decreased; items on hand increased'], ['for use over the next several months', 'nothing used yet: an asset, not an expense']],
+      correct: [['Supplies', 'dr', 'amt'], ['Cash', 'cr', 'amt']],
+      distractors: [
+        ['D3', [['Supplies Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'The supplies are sitting in the closet unused. Until they are used, they are an asset; the expense comes as they are consumed.'],
+        ['D1', [['Cash', 'dr', 'amt'], ['Supplies', 'cr', 'amt']], 'Flipped. Supplies (asset) increased (debit) and Cash decreased (credit).'],
+        ['D6', [['Supplies', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'The supplies were paid for in cash, so Cash decreased; nothing is owed.'],
+        ['D3', [['Equipment', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Supplies are used up within months; Equipment is for long-lived items used for years.'],
+      ],
+      reasoning: 'An exchange happened: {co} received supplies and gave cash. Supplies on hand are an asset: debit Supplies {amt}. Cash decreased: credit Cash {amt}. The expense comes later, as supplies are used.',
+      principle: 'A purchase whose benefit lies in the future is an asset. The cost becomes an expense as the benefit is used.' },
+
+    // ===== FOL =====
+    { id: 'FOL-01', cat: 'FOL', tier: 1, is: 'none', cash: 'in',
+      text: 'Earlier this month, {co} billed a customer ${amt} for {svc} it had completed and recorded the revenue at that time. Today the customer paid the bill in full.',
+      cues: [['recorded the revenue at that time', 'the revenue has already been recorded; do not record it again'], ['paid the bill in full', 'Cash increased and the receivable is gone']],
+      correct: [['Cash', 'dr', 'amt'], ['Accounts Receivable', 'cr', 'amt']],
+      distractors: [
+        ['D9', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'The revenue was recorded when the customer was billed. Recording it again now would count the same {amt} of revenue twice. Today only the cash and the receivable change.'],
+        ['D1', [['Accounts Receivable', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Flipped. Cash increased (debit) and the receivable, now collected, decreased (credit).'],
+        ['D3', [['Cash', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'The work was completed before the bill was sent, so nothing is unearned. The customer is paying what it already owed.'],
+        ['D6', [['Cash', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'Accounts Payable is what the company owes others. The customer owed us, which is Accounts Receivable, and that is what was collected.'],
+      ],
+      reasoning: 'An exchange happened: the customer gave cash and {co} gave up its claim. Cash (asset) increased: debit Cash {amt}. Accounts Receivable (asset) decreased because it has been collected: credit {amt}. No revenue today; that was recorded when the work was billed.',
+      principle: 'Collecting a receivable trades one asset for another. The revenue belongs to the earlier entry.' },
+
+    { id: 'FOL-02', cat: 'FOL', tier: 1, is: 'none', cash: 'out',
+      text: 'Last month, {co} received a ${amt} bill from its advertising agency for ads that ran, and recorded the expense then. Today {co} paid the bill in cash.',
+      cues: [['recorded the expense then', 'the expense is already on the books'], ['paid the bill in cash', 'Cash decreased and the payable is settled']],
+      correct: [['Accounts Payable', 'dr', 'amt'], ['Cash', 'cr', 'amt']],
+      distractors: [
+        ['D9', [['Advertising Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'The expense was recorded last month when the bill arrived. Recording it again would double the expense. Today reduces the liability and the cash.'],
+        ['D1', [['Cash', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'Flipped. Paying a bill reduces Accounts Payable (debit) and reduces Cash (credit).'],
+        ['D6', [['Notes Payable', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'A supplier\'s bill was recorded in Accounts Payable, so that is the liability being paid off. No note was involved.'],
+        ['D3', [['Accounts Payable', 'dr', 'amt'], ['Advertising Expense', 'cr', 'amt']], 'Paying a bill does not reduce an expense; it reduces Cash. The expense stays where it was recorded last month.'],
+      ],
+      reasoning: 'An exchange happened: {co} gave cash and was released from its debt. Accounts Payable (liability) decreased: debit {amt}. Cash (asset) decreased: credit Cash {amt}. No expense today; it was recorded when the bill arrived.',
+      principle: 'Paying a payable settles a liability. The expense belongs to the period the cost was incurred.' },
+
+    { id: 'FOL-03', cat: 'FOL', tier: 2, is: 'rev', cash: 'none',
+      text: 'Last month a customer paid {co} ${amt} in advance for {svc}, which {co} recorded as a liability at the time. Today {co} completed the work.',
+      cues: [['paid {co} ${amt} in advance', 'cash came in last month, not today'], ['recorded as a liability at the time', 'Unearned Revenue exists and must be reduced'], ['completed the work', 'revenue is earned now']],
+      correct: [['Unearned Revenue', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']],
+      distractors: [
+        ['D7', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'The cash arrived last month and was recorded then. No cash moved today. Today the liability is satisfied and the revenue is earned.'],
+        ['D1', [['Service Revenue', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'Flipped. The liability decreased (debit Unearned Revenue) and revenue was earned (credit Service Revenue).'],
+        ['D9', [['Accounts Receivable', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'Nobody owes us; the customer paid in advance. What changes today is the liability that was created when the cash arrived.'],
+        ['D3', [['Unearned Revenue', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'No cash was returned to the customer; the company did the work. The liability is satisfied by earning the revenue.'],
+      ],
+      reasoning: 'No cash moved today; the company fulfilled a promise it was already paid for. The liability Unearned Revenue decreased: debit {amt}. The work is complete, so revenue was earned: credit Service Revenue {amt}.',
+      principle: 'When prepaid work is performed, the liability becomes revenue. Cash is not involved because it was recorded earlier.' },
+
+    { id: 'FOL-04', cat: 'FOL', tier: 2, is: 'exp', cash: 'none', params: { n: [3, 6, 12] },
+      text: 'On {m} 1, {co} paid ${amt} for {n} months of rent in advance and recorded it as Prepaid Rent. It is now {m} 31. Record the entry that recognizes the first month of rent.',
+      cues: [['recorded it as Prepaid Rent', 'the asset already exists; adjust it'], ['It is now {m} 31', 'one of the {n} months has been used'], ['recognizes the first month', 'move one month\'s share to expense']],
+      correct: [['Rent Expense', 'dr', 'amt/n'], ['Prepaid Rent', 'cr', 'amt/n']],
+      distractors: [
+        ['D4', [['Rent Expense', 'dr', 'amt'], ['Prepaid Rent', 'cr', 'amt']], 'Only one of the {n} months has been used. The expense for one month is {amt} ÷ {n} = {amt/n}; the rest is still a prepaid asset.'],
+        ['D7', [['Rent Expense', 'dr', 'amt/n'], ['Cash', 'cr', 'amt/n']], 'The cash left on {m} 1 and was recorded then. This entry moves part of the asset to expense; Cash is not involved.'],
+        ['D1', [['Prepaid Rent', 'dr', 'amt/n'], ['Rent Expense', 'cr', 'amt/n']], 'Flipped. The asset is being used up (credit Prepaid Rent) and the expense increases (debit Rent Expense).'],
+        ['D6', [['Rent Expense', 'dr', 'amt/n'], ['Accounts Payable', 'cr', 'amt/n']], 'Nothing is owed to the landlord; the rent was paid in advance. The credit reduces the prepaid asset.'],
+      ],
+      reasoning: 'No new exchange happened; a month of a prepaid benefit was used. One of {n} months of rent has expired, so {amt/n} of the asset became an expense: debit Rent Expense {amt/n}, credit Prepaid Rent {amt/n}.',
+      principle: 'A prepaid asset becomes expense as the periods it covers pass. Only the used share moves.' },
+
+    { id: 'FOL-05', cat: 'FOL', tier: 2, is: 'rev', cash: 'none',
+      text: 'This week, customers redeemed ${amt} of {co} gift cards for {svc}. {co} had recorded the gift card sales as a liability when the cards were sold.',
+      cues: [['redeemed ${amt} of {co} gift cards', 'the service was now provided: revenue earned'], ['recorded the gift card sales as a liability', 'Unearned Revenue exists and goes down']],
+      correct: [['Unearned Revenue', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']],
+      distractors: [
+        ['D7', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'The cash was collected when the cards were sold. Redeeming a card brings no new cash; it uses up the company\'s obligation and earns the revenue.'],
+        ['D9', [['Cash', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'That was the entry when the cards were sold. Recording it again would double the liability and the cash. Redemption is the opposite direction.'],
+        ['D1', [['Service Revenue', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'Flipped. The liability decreased (debit Unearned Revenue) and revenue was earned (credit Service Revenue).'],
+        ['D3', [['Unearned Revenue', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'The company did not refund anything; customers used their cards for service, which earns the revenue.'],
+      ],
+      reasoning: 'No cash moved; the company provided the service it had been paid for. Unearned Revenue (liability) decreased: debit {amt}. The service was provided, so revenue was earned: credit Service Revenue {amt}.',
+      principle: 'Redemption is performance. The liability recorded at the card sale becomes revenue when the service is provided.' },
+
+    { id: 'FOL-06', cat: 'FOL', tier: 3, is: 'exp', cash: 'none', params: { partOf: 'amt' },
+      text: '{co} began the month with ${amt} of supplies on hand, recorded as an asset. A count at the end of the month shows ${part} of supplies still on hand.',
+      cues: [['recorded as an asset', 'the Supplies account already exists'], ['${part} of supplies still on hand', 'what remains; the difference is what was used'], ['end of the month', 'time to move the used share to expense']],
+      correct: [['Supplies Expense', 'dr', 'amt-part'], ['Supplies', 'cr', 'amt-part']],
+      distractors: [
+        ['D4', [['Supplies Expense', 'dr', 'part'], ['Supplies', 'cr', 'part']], '{part} is what is still on hand, not what was used. The amount used is the beginning balance minus what remains: {amt} − {part} = {amt-part}.'],
+        ['D4', [['Supplies Expense', 'dr', 'amt'], ['Supplies', 'cr', 'amt']], 'Not all the supplies were used; {part} is still in the storeroom. Only the used portion, {amt-part}, becomes an expense.'],
+        ['D1', [['Supplies', 'dr', 'amt-part'], ['Supplies Expense', 'cr', 'amt-part']], 'Flipped. Supplies (asset) decreased because some were used (credit), and Supplies Expense increased (debit).'],
+        ['D7', [['Supplies Expense', 'dr', 'amt-part'], ['Cash', 'cr', 'amt-part']], 'The supplies were paid for when they were bought. Using them up reduces the Supplies asset, not Cash.'],
+      ],
+      reasoning: 'No new exchange; supplies were used during the month. Used = beginning {amt} − remaining {part} = {amt-part}. That amount leaves the asset and becomes an expense: debit Supplies Expense {amt-part}, credit Supplies {amt-part}.',
+      principle: 'Supplies become an expense as they are used. The used amount is found by subtracting what remains from what you started with.' },
+
+
+    { id: 'FOL-07', cat: 'FOL', tier: 1, is: 'none', cash: 'in',
+      text: '{co} received ${amt} in cash from a customer who had been billed last month for {svc}. {co} recorded the revenue when it sent the bill.',
+      cues: [['received ${amt} in cash', 'Cash increased'], ['had been billed last month', 'a receivable already exists'], ['recorded the revenue when it sent the bill', 'the revenue is already on the books; do not record it again']],
+      correct: [['Cash', 'dr', 'amt'], ['Accounts Receivable', 'cr', 'amt']],
+      distractors: [
+        ['D9', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'The revenue was recorded last month with the bill. Recording it again would count the same {amt} twice. Today only Cash and the receivable change.'],
+        ['D1', [['Accounts Receivable', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Flipped. Cash increased (debit) and the receivable, now collected, decreased (credit).'],
+        ['D3', [['Cash', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'The work was done last month, so nothing is unearned. The customer is paying what it already owed.'],
+        ['D6', [['Cash', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'Accounts Payable is what the company owes others. The customer owed the company, which is Accounts Receivable.'],
+      ],
+      reasoning: 'An exchange happened: the customer gave cash and {co} gave up its claim. Cash increased: debit Cash {amt}. Accounts Receivable decreased: credit {amt}. No revenue today; that was recorded when the work was billed.',
+      principle: 'Collecting a receivable swaps one asset for another. The revenue belongs to the period the work was done.' },
+
+    { id: 'FOL-08', cat: 'FOL', tier: 1, is: 'none', cash: 'out',
+      text: '{co} paid ${amt} in cash to the utility company for an electricity bill it had recorded as an expense last month.',
+      cues: [['paid ${amt} in cash', 'Cash decreased'], ['had recorded as an expense last month', 'the expense is already on the books; today settles the payable']],
+      correct: [['Accounts Payable', 'dr', 'amt'], ['Cash', 'cr', 'amt']],
+      distractors: [
+        ['D9', [['Utilities Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'The expense was recorded last month when the bill arrived. Recording it again would double it. Today reduces the liability and the cash.'],
+        ['D1', [['Cash', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'Flipped. Paying a bill reduces Accounts Payable (debit) and reduces Cash (credit).'],
+        ['D3', [['Accounts Payable', 'dr', 'amt'], ['Utilities Expense', 'cr', 'amt']], 'Paying a bill does not reduce an expense; it reduces Cash.'],
+        ['D6', [['Notes Payable', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'A utility bill was recorded in Accounts Payable, so that is the liability being paid off.'],
+      ],
+      reasoning: 'An exchange happened: {co} gave cash and was released from its debt. Accounts Payable decreased: debit {amt}. Cash decreased: credit {amt}. No expense today; it was recorded when the bill arrived.',
+      principle: 'Paying a payable settles a liability. The expense stays in the period the cost was incurred.' },
+
+    { id: 'FOL-09', cat: 'FOL', tier: 3, is: 'rev', cash: 'none', params: { n: [2] },
+      text: 'Two weeks ago a customer paid {co} ${amt} in advance for a {svc} project, which {co} recorded as Unearned Revenue. This week {co} finished exactly half of the project; the other half is scheduled for next month.',
+      cues: [['recorded as Unearned Revenue', 'the liability exists and is reduced as work is done'], ['finished exactly half of the project', 'only half has been earned'], ['the other half is scheduled for next month', 'the rest stays unearned']],
+      correct: [['Unearned Revenue', 'dr', 'amt/n'], ['Service Revenue', 'cr', 'amt/n']],
+      distractors: [
+        ['D4', [['Unearned Revenue', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'Only half the work is done, so only half the revenue is earned: {amt} ÷ 2 = {amt/n}. The other {amt/n} stays in Unearned Revenue until next month.'],
+        ['D7', [['Cash', 'dr', 'amt/n'], ['Service Revenue', 'cr', 'amt/n']], 'The cash arrived two weeks ago and was recorded then. No cash moved this week; the liability is being reduced as the work is done.'],
+        ['D1', [['Service Revenue', 'dr', 'amt/n'], ['Unearned Revenue', 'cr', 'amt/n']], 'Flipped. The liability decreased (debit Unearned Revenue) and revenue was earned (credit Service Revenue).'],
+        ['D9', [['Accounts Receivable', 'dr', 'amt/n'], ['Service Revenue', 'cr', 'amt/n']], 'Nobody owes {co}; the customer paid in advance. What changes is the liability created when the cash arrived.'],
+      ],
+      reasoning: 'No cash moved this week; the company performed part of what it was paid for. Half the work is done, so half the revenue is earned: {amt} ÷ 2 = {amt/n}. Unearned Revenue decreases: debit {amt/n}. Revenue is earned: credit Service Revenue {amt/n}.',
+      principle: 'Revenue is recognized as the work is performed, in proportion to how much is done. Prepaid cash stays a liability until then.' },
+
+    // ===== NONE =====
+    { id: 'NONE-01', cat: 'NONE', tier: 1, is: 'none', cash: 'none',
+      text: '{co} signed a contract to provide {svc} next month for ${amt}. No work has started and no cash has changed hands.',
+      cues: [['signed a contract', 'a promise, not an exchange'], ['No work has started', 'nothing earned'], ['no cash has changed hands', 'no asset moved']],
+      correct: 'NONE',
+      distractors: [
+        ['D8', [['Accounts Receivable', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'Nothing has been earned because the work has not started. Signing a contract is a promise, and promises are not recorded until one side performs.'],
+        ['D8', [['Cash', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'This would be right if the customer had paid in advance. The description says no cash changed hands.'],
+        ['D8', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'Neither cash nor performance has happened. There is nothing to record yet.'],
+        ['D8', [['Service Revenue', 'dr', 'amt'], ['Accounts Receivable', 'cr', 'amt']], 'No revenue and no receivable exist yet, and the sides are flipped besides.'],
+      ],
+      reasoning: 'Ask first: was anything exchanged? No. {co} gave nothing and received nothing; both sides only promised. With no exchange, there is no journal entry.',
+      principle: 'A transaction is recorded only when an exchange occurs: one party gives something and the other receives something.' },
+
+    { id: 'NONE-02', cat: 'NONE', tier: 1, is: 'none', cash: 'none',
+      text: '{co} placed an order for ${amt} of supplies. The supplies have not arrived, and nothing has been paid.',
+      cues: [['placed an order', 'a request, not a delivery'], ['have not arrived', 'nothing received'], ['nothing has been paid', 'nothing given']],
+      correct: 'NONE',
+      distractors: [
+        ['D8', [['Supplies', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'This is the entry for receiving supplies on account. Nothing has arrived yet, so the company has no supplies and owes nothing.'],
+        ['D8', [['Supplies', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Nothing was paid and nothing was received. Both halves of this entry describe things that have not happened.'],
+        ['D8', [['Supplies Expense', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'No supplies have been received, let alone used, so there is no expense and no liability yet.'],
+        ['D8', [['Accounts Payable', 'dr', 'amt'], ['Supplies', 'cr', 'amt']], 'No payable exists to pay down and no supplies exist to give up.'],
+      ],
+      reasoning: 'Was anything exchanged? No. An order is a request; the supplier has not delivered and {co} has not paid. The entry comes when the supplies arrive.',
+      principle: 'Ordering is not receiving. The exchange, and the entry, happen on delivery.' },
+
+    { id: 'NONE-03', cat: 'NONE', tier: 1, is: 'none', cash: 'none',
+      text: '{co} hired a new employee who will start next week at a salary of ${amt} per month.',
+      cues: [['hired', 'an agreement about the future'], ['will start next week', 'no work done yet, so no cost incurred']],
+      correct: 'NONE',
+      distractors: [
+        ['D8', [['Salaries and Wages Expense', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'No work has been done, so no cost has been incurred and nothing is owed. Wages become an expense as the employee works.'],
+        ['D8', [['Salaries and Wages Expense', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Nothing has been paid and no work has happened. This entry would be for paying wages already earned.'],
+        ['D8', [['Prepaid Rent', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'No cash was paid, and a hiring agreement is not a prepaid asset.'],
+        ['D8', [['Cash', 'dr', 'amt'], ['Salaries and Wages Expense', 'cr', 'amt']], 'Hiring does not bring in cash or reduce an expense. Nothing has happened yet.'],
+      ],
+      reasoning: 'Was anything exchanged? No. Hiring is an agreement; the employee has not worked and has not been paid. The first entry comes when wages are earned or paid.',
+      principle: 'Agreements about the future are not transactions. The expense begins when the work begins.' },
+
+    { id: 'NONE-04', cat: 'NONE', tier: 2, is: 'none', cash: 'none',
+      text: 'The owner of {co} bought a ${amt} car for personal use, paying with personal savings.',
+      cues: [['The owner', 'a separate person from the business'], ['for personal use', 'not a business asset'], ['personal savings', 'not business cash']],
+      correct: 'NONE',
+      distractors: [
+        ['D8', [['Equipment', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'The business did not buy the car and did not pay for it. The owner and the business are separate entities; only the business\'s own transactions are recorded.'],
+        ['D8', [['Equipment', 'dr', 'amt'], ['Common Stock', 'cr', 'amt']], 'The owner did not contribute the car to the business; it is for personal use. No business asset and no new ownership investment.'],
+        ['D8', [['Equipment', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'The business does not own the car and does not owe anything for it. The owner bought it personally.'],
+        ['D8', [['Equipment', 'dr', 'amt'], ['Notes Payable', 'cr', 'amt']], 'The business owes nothing for this car and does not own it.'],
+      ],
+      reasoning: 'Was anything exchanged by the business? No. The owner spent personal money on a personal item. Under the separate entity assumption, the business records only its own transactions.',
+      principle: 'The business is a separate entity from its owner. Personal transactions of the owner are not recorded by the business.' },
+
+    { id: 'NONE-05', cat: 'NONE', tier: 2, is: 'none', cash: 'none',
+      text: 'A customer told {co} that it plans to order about ${amt} of {svc} sometime next quarter.',
+      cues: [['plans to order', 'intention, not a transaction'], ['sometime next quarter', 'nothing has happened yet']],
+      correct: 'NONE',
+      distractors: [
+        ['D8', [['Accounts Receivable', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'The customer has not been billed and nothing has been performed. A plan to order is not a sale.'],
+        ['D8', [['Cash', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'No cash was received. Unearned Revenue requires a customer to actually pay in advance.'],
+        ['D8', [['Accounts Receivable', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'Nobody owes anything and nothing has been prepaid. Neither account has changed.'],
+        ['D8', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'Neither cash nor service has moved. There is nothing to record.'],
+      ],
+      reasoning: 'Was anything exchanged? No. The customer expressed an intention. Even a firm order would not be recorded until the work is performed or cash is received.',
+      principle: 'Intentions and even orders are not exchanges. Revenue requires performance; a receivable requires a bill for work done.' },
+
+    { id: 'NONE-06', cat: 'NONE', tier: 3, is: 'none', cash: 'none',
+      text: '{co} received a written price quote from a supplier offering to sell it a piece of equipment for ${amt}. {co} has not decided whether to buy.',
+      cues: [['received a written price quote', 'an offer, not a purchase'], ['has not decided whether to buy', 'no exchange has occurred']],
+      correct: 'NONE',
+      distractors: [
+        ['D8', [['Equipment', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'No equipment has been received and nothing is owed. A quote is an offer; the entry comes only if the company accepts it and receives the equipment.'],
+        ['D8', [['Equipment', 'dr', 'amt'], ['Cash', 'cr', 'amt']], 'Nothing was bought or paid for. The company only has a piece of paper with a price on it.'],
+        ['D8', [['Supplies', 'dr', 'amt'], ['Accounts Payable', 'cr', 'amt']], 'Nothing was received, and equipment would not be Supplies in any case.'],
+        ['D8', [['Equipment', 'dr', 'amt'], ['Notes Payable', 'cr', 'amt']], 'No note was signed and no equipment was received.'],
+      ],
+      reasoning: 'Was anything exchanged? No. A quote tells the company what it would cost; it changes nothing the company owns or owes.',
+      principle: 'Information about a possible future transaction is not a transaction.' },
+
+    { id: 'NONE-07', cat: 'NONE', tier: 1, is: 'none', cash: 'none',
+      text: '{co} sent a customer a written estimate of ${amt} for {svc}. The customer has not responded.',
+      cues: [['sent a customer a written estimate', 'an offer to do work, not work done'], ['has not responded', 'no agreement, no work, no cash']],
+      correct: 'NONE',
+      distractors: [
+        ['D8', [['Accounts Receivable', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'No service has been provided and the customer has not even agreed. There is no revenue and nothing is owed.'],
+        ['D8', [['Cash', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'No cash was received. An estimate is a price, not a payment.'],
+        ['D8', [['Cash', 'dr', 'amt'], ['Service Revenue', 'cr', 'amt']], 'Neither cash nor service has moved. There is nothing to record.'],
+        ['D8', [['Accounts Receivable', 'dr', 'amt'], ['Unearned Revenue', 'cr', 'amt']], 'Nobody owes anything and nothing has been prepaid.'],
+      ],
+      reasoning: 'Was anything exchanged? No. An estimate is an offer. Until the customer accepts and either pays or the work is done, there is no transaction.',
+      principle: 'Offers, quotes, and estimates are not transactions. Revenue requires performance.' },
+  ],
+};
+
+</script>
+<script>
+(async function(){
+  const CFG = window.JEA_CONFIG||{}, C = window.JEA_CONTENT;
+  const qs = new URLSearchParams(location.search);
+  const block = qs.get('block') || (CFG.blocks&&CFG.blocks[0]&&CFG.blocks[0].id) || '1';
+  const blk = (CFG.blocks||[]).find(b=>b.id===block) || {name:'Block '+block};
+  document.getElementById('title').textContent = 'Journal Entry Arena — ' + blk.name;
+  const sub = document.getElementById('sub'), boardsEl = document.getElementById('boards'), pinEl = document.getElementById('pin');
+  if(!CFG.firebase){ sub.textContent = 'The class record is not turned on yet (config.js has firebase: null), so there is nothing to show. See the README.'; return; }
+  const [appM, authM, fsM] = await Promise.all([
+    import('https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js'),
+    import('https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js'),
+    import('https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js')]);
+  const app = appM.initializeApp(CFG.firebase); await authM.signInAnonymously(authM.getAuth(app)); const db = fsM.getFirestore(app);
+  const BOARDS = [{key:'overall', name:'Board score (all six categories)'}, ...C.categories.map(c=>({key:c.code, name:c.name})), {key:'streak', name:'Longest current streak'}, {key:'practice', name:'Most practiced'}];
+  let pinned = qs.get('cat') || null, idx = 0, stats = {}, lastRanks = {};
+  BOARDS.forEach(b=>{ const btn=document.createElement('button'); btn.textContent=b.name; btn.onclick=()=>{ pinned = pinned===b.key?null:b.key; render(); }; btn.dataset.key=b.key; pinEl.appendChild(btn); });
+  function rankFor(key){
+    const rows = Object.values(stats).map(s=>{
+      if(key==='practice') return {name:s.name, score:s.attempts, text:s.attempts+' attempts'};
+      if(key==='streak'){ let best=0, bc=''; C.categories.forEach(c=>{ const x=s.byCat&&s.byCat[c.code]; if(x&&(x.streak||0)>best){best=x.streak;bc=c.short;} }); if(best<3) return null; return {name:s.name, score:best, text:best+' in a row ('+bc+')'}; }
+      if(key==='overall'){ const cats=C.categories.map(c=>s.byCat&&s.byCat[c.code]); if(!cats.every(x=>x&&x.attempts>=5)) return null; const v=cats.reduce((a,x)=>a+x.score,0)/cats.length; return {name:s.name, score:v, text:Math.round(v*100)+'%'}; }
+      const x = s.byCat&&s.byCat[key]; if(!x||x.attempts<5) return null; return {name:(x.mastered?'★ ':'')+s.name, score:x.score, streak:x.streak||0, tries:x.attempts, text:Math.round(x.score*100)+'%'};
+    }).filter(Boolean);
+    rows.sort((a,b)=> b.score-a.score || (b.streak||0)-(a.streak||0) || (b.tries||0)-(a.tries||0) || a.name.localeCompare(b.name));
+    return rows.slice(0,5);
+  }
+  function boardHTML(b){
+    const rows = rankFor(b.key); const prev = lastRanks[b.key]||[]; lastRanks[b.key]=rows.map(r=>r.name+'|'+r.text);
+    return `<div class="board"><h2>${b.name}</h2>${rows.length? rows.map((r,i)=>`<div class="row ${prev[i]!==(r.name+'|'+r.text)&&prev.length?'moved':''}"><span class="n">${i+1}</span><span>${r.name}</span><span class="s">${r.text}</span></div>`).join('') : '<div class="empty">No one ranked yet</div>'}</div>`;
+  }
+  function render(){
+    pinEl.querySelectorAll('button').forEach(x=>x.classList.toggle('on', x.dataset.key===pinned));
+    const show = pinned ? BOARDS.filter(b=>b.key===pinned) : [BOARDS[0], BOARDS[1 + (idx % (BOARDS.length-3))], BOARDS[BOARDS.length-2 + (idx % 2)]];
+    boardsEl.innerHTML = show.map(boardHTML).join('');
+    const n = Object.keys(stats).length; sub.textContent = n + ' student' + (n===1?'':'s') + ' in the record · updated ' + new Date().toLocaleTimeString();
+  }
+  fsM.onSnapshot(fsM.query(fsM.collection(db,'stats'), fsM.where('block','==',block)), snap=>{ stats={}; snap.forEach(d=>{ stats[d.id]=d.data(); }); render(); });
+  setInterval(()=>{ if(!pinned){ idx++; render(); } }, 20000);
+})();
+</script>
+</body>
+</html>
