@@ -27,7 +27,7 @@ window.JEA_CONFIG = {
   // Leave as null to run with results saved only in each student's browser.
   // To turn it on: Firebase console -> your project -> Project settings -> "Your apps" -> Web app -> copy the
   // firebaseConfig object and paste it here (see README, step "Turn on the class record").
-  firebase: null,
+  firebase: { apiKey: "AIzaSyBnBpSSxGoxSSdPU188AhxiUmzJgvxUurc", authDomain: "journal-entry-arena.firebaseapp.com", projectId: "journal-entry-arena", storageBucket: "journal-entry-arena.firebasestorage.app", messagingSenderId: "378585775864", appId: "1:378585775864:web:57f5af35107c6bef4c850d" },
   // Example:
   // firebase: { apiKey: "...", authDomain: "xxx.firebaseapp.com", projectId: "xxx", storageBucket: "xxx.appspot.com", messagingSenderId: "...", appId: "..." },
 };
